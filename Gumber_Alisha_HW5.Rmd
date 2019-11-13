@@ -1,0 +1,203 @@
+---
+title: "Homework 5"
+author: "Alisha Gumber"
+date: "11/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load relevant libraries, include=FALSE}
+library(tidyverse)
+library(ISLR)
+library(tree)
+library(randomForest)
+library(MASS)
+library(gbm)
+library(rpart)
+library(mlbench)
+library(ipred)
+```
+
+## Homework
+
+1. Attempt a regression tree-based method (not covered in this tutorial) on a reasonable dataset of your choice. Explain the results. 
+
+The difference between regression and classification is the output of the response variable. The output variable in regression is continous (numerical), and the output variable of classification is categorical (discrete). In general, tree-based methods are great for classification, but they can be trickier for regression models.
+I'm using the Pima Indian Diabetes dataset from the mlbench package to predict number of pregnancies.
+I'm using the rpart function for my regression tree, which is part of the rpart package. Rpart stands for 'recursive partitioning' for regression trees.
+
+```{r}
+data("PimaIndiansDiabetes")
+#str(PimaIndiansDiabetes)
+
+# set seed to make results reproducible 
+set.seed(29)
+
+# split data into train and test subset
+train_size <- floor(0.75 * nrow(PimaIndiansDiabetes))
+train_pos <- sample(seq_len(nrow(PimaIndiansDiabetes)), size = train_size)
+
+train_class <- PimaIndiansDiabetes[train_pos, ]
+test_class <- PimaIndiansDiabetes[-train_pos, ]
+
+# Train model using rpart. Need to set method to 'anova' for regression trees. If method is not chosen, by default, rpart will try to make the best guess as to which method to use.
+fit <- rpart(pregnant ~ ., method="anova", data=train_class)
+
+printcp(fit) # display the results - tells us variables used in construction of tree, root node error, and n.
+plotcp(fit) # visualize cross-validation results
+summary(fit) # detailed summary of splits
+
+# plot tree
+plot(fit, uniform=TRUE,
+   main="Regression Tree for Pregnancy Number")
+text(fit, use.n=TRUE, all=TRUE, cex=.9)
+
+par(mfrow=c(1,2)) # two plots on one page
+rsq.rpart(fit) # visualize cross-validation results 
+
+
+```
+
+
+2. Attempt both a bagging and boosting method on a reasonable dataset of your choice. Explain the results.
+
+
+```{r}
+# I'm using a different function and slightly different method for bagging than what was shown in class.
+# I'm using the bagging function from the 'ipred' package to do bagging on the dataset. The first argument in the function is what and i'm predicting with what variables (pregnant with all variables). Using the training data from the above step. nbagg=100 means i'm doing a bagging regression tree with 100 bootstrap replications (100 iterations of bagged model). coob=TRUE means it will be computing the out-of-bag error rate.
+# Can use the OOB observations to estimate the model’s accuracy, creating a natural cross-validation process.
+
+set.seed(31)
+training_size <- floor(0.75 * nrow(PimaIndiansDiabetes))
+training_pos <- sample(seq_len(nrow(PimaIndiansDiabetes)), size = training_size)
+
+training_data <- PimaIndiansDiabetes[training_pos, ]
+testing_data <- PimaIndiansDiabetes[-training_pos, ]
+#dim(training_data)
+#dim(testing_data)
+
+set.seed(31)
+pima_bagging <- bagging(pregnant~., data=training_data, coob=TRUE)
+pima_bagging
+summary(pima_bagging)
+
+# The bagging function defaults to 25 bootstrap samples. I'm going to asses the error versus the number of trees. Currently the rmse is 2.6407 with 25 bootstrap samples.
+# assess 10-50 bagged trees
+ntree <- 10:100
+
+# create empty vector to store OOB RMSE values
+rmse <- vector(mode = "numeric", length = length(ntree))
+
+for (i in seq_along(ntree)) {
+  # reproducibility
+  set.seed(31)
+  
+  # perform bagged model
+  model <- bagging(
+  formula = pregnant~.,
+  data    = training_data,
+  coob    = TRUE,
+  nbagg   = ntree[i]
+)
+  # get OOB error
+  rmse[i] <- model$err
+}
+
+plot(ntree, rmse, type = 'l', lwd = 2)
+abline(v = 25, col = "red", lty = "dashed")
+
+# From the plot above, it looks like the rmse can decrease a bit more with more bootstrap samples. I'm going to increase this to 100.
+set.seed(31)
+pima_bagging_2 <- bagging(pregnant~., data=training_data, nbagg=100, coob=TRUE)
+pima_bagging_2
+
+# predict of test set
+predict_bag <- predict(pima_bagging_2, newdata=testing_data, type="class")
+summary(predict_bag)
+
+# A benefit to using the randomForest function instead of the bagging function is that we can make a variable importance plot.
+# Variable importance plot:
+bag_pima = randomForest(pregnant~., data = training_data, mtry=8, importance=TRUE)
+varImpPlot(bag_pima)
+
+pred_bag = predict(bag_pima, newdata = testing_data)
+summary(pred_bag)
+```
+
+
+Using method in class for bagging with the Pima Indian Diabetes data in mlbench:
+```{r}
+## Bagging is a way to decrease the variance in prediction models using decision trees. 
+## Method: bootstrap by taking repeated samples from the training data set. Generate B different bootstrapped training data sets. Then train our method of the bth bootstrapped training set, and average all the predictions
+
+set.seed(31)
+training_size <- floor(0.75 * nrow(PimaIndiansDiabetes))
+training_pos <- sample(seq_len(nrow(PimaIndiansDiabetes)), size = training_size)
+
+training_data <- PimaIndiansDiabetes[training_pos, ]
+testing_data <- PimaIndiansDiabetes[-training_pos, ]
+#dim(training_data)
+#dim(testing_data)
+
+set.seed(31)
+rf_pima <- randomForest(pregnant~., data=PimaIndiansDiabetes, subet=training_data)
+summary(rf_pima)
+
+#mtry=8
+# iterate random forest model with 8 (mtry) different grids
+
+set.seed(31)
+# out of bag training error (MSE)
+oob_error <- double(8)
+# testing error (MSE)
+test_error <- double(8)
+
+# Loop of mtry from 1 to 8, fit randomForest to training dataset
+for(mtry in 1:8) {
+  fit_2 <- randomForest(pregnant~., data=training_data, mtry=mtry, ntree=450)
+  oob_error[mtry] = fit_2$mse[450] # out-of-bag error - extract MSE
+  pred_2 = predict(fit_2, new_data=testing_data,) # predict on testing data
+  test_error[mtry] = with(testing_data, mean( (pregnant-pred_2)^2 )) # compute testing error
+}
+
+# Visualize the results
+matplot(1:mtry, cbind(test_error, oob_error), pch = 23, col = c("red", "blue"), type = "b", ylab="Mean Squared Error")
+legend("topright", legend = c("OOB", "Test"), pch = 23, col = c("red", "blue"))
+
+```
+
+Generally, the OOB error should decrease as mtry increases. However, the opposite occurs here. This could be the fact that this dataset already has low variation and does not need bagging. 
+
+
+Boosting with Pima Indian Diabetes Dataset
+```{r}
+# Booting
+boosting_pima = gbm(pregnant ~ ., data = train_class, distribution = "gaussian", n.trees = 10000, shrinkage = 0.01, interaction.depth = 4)
+
+# Variable Importance Plot
+summary(boosting_pima)
+ 
+# Visualize important variables of interest - from above that would be age and pedigree
+plot(boosting_pima,i="age")
+plot(boosting_pima,i="pedigree")
+
+# Predict on test set. Number of trees - a vector of 100 values
+number_trees = seq(from = 100, to = 10000, by = 100)
+predmat_2 = predict(boosting_pima, newdata = test_class, n.trees = number_trees) # generate prediction matrix for each tree
+dim(predmat_2) # dimensions of the prediction matrix
+
+# Calculate mean squared test error
+boost.err_2 = with(test_class, apply( (predmat_2 - pregnant)^2, 2, mean) )
+head(boost.err_2)
+
+# Visualize Boosting Error Plot
+plot(number_trees, boost.err_2, pch = 23, ylab = "Mean Squared Error", xlab = "# Trees", main = "Boosting Test Error")
+abline(h = min(test_error), col = "red")
+
+```
+
+Boosting is another method for reducing data with high variation and bias. From the results above, we see the most important variables for predicting the number of pregnancies in the Pima Indian Diabetes dataset are age and pedigree. From the Boosting Test Error plot, it actually looks like MSE increases as the number of trees increases. This is strange and should not be the case, because the number of trees is generally supposed to reduce the MSE. However, this could be the case because this dataset already has low variation and does not need boosting.
